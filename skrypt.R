@@ -28,7 +28,6 @@ invisible(lapply(required_packages, library, character.only = TRUE))
 # 1. WCZYTANIE DANYCH
 # =============================================================================
 
-# Dane wczytane przez użytkownika (format GUS BDL – read.csv2)
 dane_ceny_1m2_mieszkan <- read.csv2("RYNE_3787_CTAB_20260321171501.csv")
 dane_wynagrodzenia      <- read.csv2("WYNA_2497_CTAB_20260321172330.csv")
 dane_bezrobocie         <- read.csv2("RYNE_2392_CTAB_20260321172526.csv")
@@ -40,59 +39,29 @@ dane_migracje           <- read.csv2("LUDN_1350_CTAB_20260321174505.csv")
 dane_podm_gosp          <- read.csv2("PODM_3802_CTAB_20260321174825.csv")
 dane_liczba_studentow   <- read.csv2("SZKO_3226_CTAB_20260321175636.csv")
 
-# Podgląd struktury (uruchom ręcznie, żeby zobaczyć kolumny):
-# str(dane_ceny_1m2_mieszkan)
-# head(dane_ceny_1m2_mieszkan)
-
-
 # =============================================================================
 # 2. FUNKCJA POMOCNICZA – CZYSZCZENIE FORMATU GUS BDL
 # =============================================================================
-# Rzeczywisty format eksportu GUS BDL (CTAB):
-#   Kolumna 1: "Kod"   – kod TERYT jednostki
-#   Kolumna 2: "Nazwa" – nazwa jednostki
-#   Kolumna 3: wartość – nazwa w stylu "ogółem.ogółem.2022..zł." (zależy od zmiennej)
-#   Kolumna 4: "X"     – pusta / nieużywana
-#
-# Funkcja zawsze bierze 3. kolumnę jako wartość liczbową i zwraca
-# ramkę z kolumnami: kod | nazwa | <nazwa_zmiennej>
 
 extract_gus <- function(df, nazwa_zmiennej) {
   
-  # Kolumny identyfikacyjne: zawsze 1. i 2.
   col_kod   <- names(df)[1]   # "Kod"
   col_nazwa <- names(df)[2]   # "Nazwa"
   col_wartosc <- names(df)[3] # np. "ogółem.ogółem.2022..zł."
   
-  cat(sprintf("  [%s] kolumna wartości: %s\n", nazwa_zmiennej, col_wartosc))
-  
   wynik <- df[, c(col_kod, col_nazwa, col_wartosc)]
   names(wynik) <- c("kod", "nazwa", nazwa_zmiennej)
   
-  # Konwersja na liczbę: usunięcie spacji, zamiana przecinka na kropkę
-  wynik[[nazwa_zmiennej]] <- suppressWarnings(
-    as.numeric(gsub(",", ".", gsub("[[:space:]]", "", 
-                                   as.character(wynik[[nazwa_zmiennej]]))))
-  )
-  
-  # Usunięcie wiersza ogólnopolskiego (kod = "0", "00", "0000000" itp.)
-  wynik <- wynik[!grepl("^0+$", trimws(as.character(wynik$kod))), ]
-  
-  # Usunięcie pustych wierszy (np. stopka GUS)
-  wynik <- wynik[!is.na(wynik$kod) & nchar(trimws(as.character(wynik$kod))) > 0, ]
+  # Konwersja na liczbę
+  wynik[[nazwa_zmiennej]] <- suppressWarnings(as.numeric(as.character(wynik[[nazwa_zmiennej]])))
   
   return(wynik)
 }
 
-
 # =============================================================================
 # 3. PRZYGOTOWANIE DANYCH
 # =============================================================================
-# Rok został wybrany podczas eksportu z GUS BDL – kazdy plik zawiera
-# dokladnie jedna kolumne z wartoscia (3. kolumna), np. "ogoltem.ogoltem.2022..zl."
-# Funkcja extract_gus() zawsze bierze te 3. kolumne.
 
-cat("-- Wczytywanie i parsowanie danych GUS --\n")
 ceny          <- extract_gus(dane_ceny_1m2_mieszkan, "cena_m2")
 wynagrodzenia <- extract_gus(dane_wynagrodzenia,     "wynagrodzenie")
 bezrobocie    <- extract_gus(dane_bezrobocie,        "bezrobocie")
@@ -102,9 +71,7 @@ urbanizacja   <- extract_gus(dane_wsk_urb,           "urbanizacja")
 pozwolenia    <- extract_gus(dane_liczba_pozwolen,   "pozwolenia_na_1000")
 migracje      <- extract_gus(dane_migracje,          "saldo_migracji")
 studenci      <- extract_gus(dane_liczba_studentow,  "studenci")
-
-
-podmioty <- extract_gus(dane_podm_gosp, "podmioty_gosp")
+podmioty      <- extract_gus(dane_podm_gosp,         "podmioty_gosp")
 
 
 # =============================================================================
@@ -124,7 +91,7 @@ dane <- ceny %>%
 
 cat("Wymiary ramki po scaleniu:", dim(dane), "\n")
 cat("Nazwy kolumn:", paste(names(dane), collapse = ", "), "\n")
-
+head(dane)
 
 # =============================================================================
 # 5. CZYSZCZENIE DANYCH
@@ -147,11 +114,10 @@ cat(sprintf("\nImputacja 'studenci': uzupełniono %d braków wartością 0\n", n
 # Pozostałe zmienne - usunięcie wierszy z NA
 dane_clean <- dane %>% drop_na()
 
-# Usunięcie wierszy z cena_m2 <= 0 (log-transformacja wymaga wartości dodatnich)
+# Usunięcie wierszy z cena_m2 <= 0 
 n_niepoprawn <- sum(dane_clean$cena_m2 <= 0, na.rm = TRUE)
 if (n_niepoprawn > 0) {
-  cat(sprintf("\nUsunięto %d wierszy z cena_m2 <= 0 (niemożliwa log-transformacja):\n",
-              n_niepoprawn))
+  cat(sprintf("\nUsunięto %d wierszy z cena_m2 <= 0:\n", n_niepoprawn))
   print(dane_clean[dane_clean$cena_m2 <= 0, c("nazwa", "cena_m2")])
   dane_clean <- dane_clean[dane_clean$cena_m2 > 0, ]
 }
@@ -164,24 +130,32 @@ dane_clean <- dane_clean %>%
     studenci_na_1000       = round(studenci       / (ludnosc), 2),
     saldo_migracji_na_1000 = round(saldo_migracji / (ludnosc), 2)
   ) %>%
-  dplyr::select(-studenci, -saldo_migracji)  # zastępujemy oryginalne kolumny
-
-cat("\nPrzeliczono 'studenci' i 'saldo_migracji' na 1000 mieszkańców.\n")
-
+  dplyr::select(-studenci, -saldo_migracji)
 
 # 5d. Sprawdzenie wartości odstających (IQR)
 wykryj_outliers <- function(x, nazwa) {
-  Q1 <- quantile(x, 0.25, na.rm = TRUE)
-  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  Q1 <- quantile(x, 0.25)
+  Q3 <- quantile(x, 0.75)
   IQR_val <- Q3 - Q1
-  out <- sum(x < (Q1 - 3*IQR_val) | x > (Q3 + 3*IQR_val), na.rm = TRUE)
+  out <- sum(x < (Q1 - 3*IQR_val) | x > (Q3 + 3*IQR_val))
   if (out > 0) cat(sprintf("  %s: %d wartości odstających (3×IQR)\n", nazwa, out))
 }
 
 cat("\n── Wartości odstające (3×IQR) ──\n")
-num_cols <- names(dane_clean)[sapply(dane_clean, is.numeric)]
+num_cols <- setdiff(names(dane_clean)[sapply(dane_clean, is.numeric)], "kod")
 invisible(lapply(num_cols, function(col) wykryj_outliers(dane_clean[[col]], col)))
 
+zm <- "wynagrodzenie"  # zmień na interesującą zmienną żeby zobaczyć outlierów
+Q1 <- quantile(dane_clean[[zm]], 0.25)
+Q3 <- quantile(dane_clean[[zm]], 0.75)
+IQR_val <- Q3 - Q1
+
+dane_clean[dane_clean[[zm]] < Q1 - 3*IQR_val | 
+             dane_clean[[zm]] > Q3 + 3*IQR_val, 
+           c("nazwa", zm)]
+# widać że w powiecie jastrzębskim w wynagrodzeniu coś jest nie tak więc go usuwamy 
+
+dane_clean <- dane_clean[dane_clean$nazwa != "Powiat m. Jastrzębie-Zdrój", ]
 
 # =============================================================================
 # 6. ANALIZA ROZKŁADÓW ZMIENNYCH
@@ -189,21 +163,12 @@ invisible(lapply(num_cols, function(col) wykryj_outliers(dane_clean[[col]], col)
 
 # 6a. Statystyki opisowe
 cat("\n── Statystyki opisowe ──\n")
-statystyki <- dane_clean %>%
-  dplyr::select(where(is.numeric)) %>%
-  summarise(across(everything(), list(
-    n      = ~sum(!is.na(.)),
-    srednia= ~mean(., na.rm = TRUE),
-    mediana= ~median(., na.rm = TRUE),
-    sd     = ~sd(., na.rm = TRUE),
-    skos   = ~moments::skewness(., na.rm = TRUE),
-    kurtoza= ~moments::kurtosis(., na.rm = TRUE),
-    min    = ~min(., na.rm = TRUE),
-    max    = ~max(., na.rm = TRUE)
-  ))) %>%
-  pivot_longer(everything(), names_to = c("zmienna", ".value"),
-               names_pattern = "(.+)_(.+)$")
-print(as.data.frame(statystyki), digits = 3)
+print(summary(dane_clean %>% dplyr::select(where(is.numeric))))
+
+cat("\n── Skośność i kurtoza ──\n")
+print(round(sapply(dane_clean %>% dplyr::select(where(is.numeric)),
+                   function(x) c(skosnosc = moments::skewness(x, na.rm = TRUE),
+                                 kurtoza  = moments::kurtosis(x, na.rm = TRUE))), 3))
 
 # 6b. Histogramy zmiennych
 par(mfrow = c(3, 4), mar = c(3, 3, 2, 1))
@@ -244,7 +209,7 @@ ggcorrplot(macierz_cor,
            type     = "lower",
            lab      = TRUE,
            lab_size = 2.5,
-           colors   = c("#d73027","white","#1a9850"),
+           colors   = c("red","white","green"),
            title    = "Macierz korelacji zmiennych") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -253,7 +218,7 @@ zmienne_objasniane <- setdiff(num_cols, "cena_m2")
 p_list <- lapply(zmienne_objasniane, function(var) {
   ggplot(dane_clean, aes_string(x = var, y = "cena_m2")) +
     geom_point(alpha = 0.6, color = "steelblue") +
-    geom_smooth(method = "lm", se = TRUE, color = "firebrick") +
+    geom_smooth(method = "lm", se = TRUE, color = "red") +
     labs(title = paste("cena_m2 ~", var),
          x = var, y = "cena 1m² [PLN]") +
     theme_minimal(base_size = 9)
@@ -265,10 +230,10 @@ do.call(grid.arrange, c(p_list, ncol = 3))
 # 8. PODZIAŁ NA ZBIÓR TRENINGOWY I TESTOWY
 # =============================================================================
 
-set.seed(42)  # reprodukowalność wyników
+set.seed(123)
 
-n       <- nrow(dane_clean)
-indeksy_train <- sample(seq_len(n), size = floor(0.75 * n))  # 75% trening
+n <- nrow(dane_clean)
+indeksy_train <- sample(seq_len(n), size = floor(0.70 * n))  # 70% trening
 
 zbior_train <- dane_clean[ indeksy_train, ]
 zbior_test  <- dane_clean[-indeksy_train, ]
