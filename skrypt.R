@@ -15,7 +15,8 @@ required_packages <- c(
   "Metrics",     # miary błędu (rmse, mae)
   "ggcorrplot",  # ggplot2-owa macierz korelacji
   "gridExtra",   # łączenie wykresów
-  "moments"      # skewness, kurtosis
+  "moments",      # skewness, kurtosis
+  "randtests"
 )
 
 # Instalacja brakujących pakietów
@@ -247,7 +248,7 @@ cat("Średnia cena_m2 – test:   ", mean(zbior_test$cena_m2), "\n")
 
 
 # =============================================================================
-# 9. DOBÓR ZMIENNYCH I ESTYMACJA MODELU
+# 9. DOBÓR ZMIENNYCH I ESTYMACJA MODELI
 # =============================================================================
 
 # 9a. Model pełny (wszystkie zmienne)
@@ -268,56 +269,72 @@ cat("\n── Model po selekcji krokowej (AIC) ──\n")
 summary(model_krokowy)
 cat("Wybrane zmienne:", paste(names(coef(model_krokowy))[-1], collapse = ", "), "\n")
 
-# 9c. Porównanie AIC/BIC
-cat(sprintf("\nModel pełny:   AIC = %.2f | BIC = %.2f\n",
-            AIC(model_pelny), BIC(model_pelny)))
-cat(sprintf("Model krokowy: AIC = %.2f | BIC = %.2f\n",
-            AIC(model_krokowy), BIC(model_krokowy)))
+# 9c. Metoda Hellwiga
+dane_Hellwig <- zbior_train[-c(1:2)]
+cor_mat <- cor(dane_Hellwig)
+r0 <-  cor_mat[1,-1]
+r <- cor_mat[-1,-1]
+comb <- expand.grid(rep(list(c(T,F)),9))
+H <- numeric(nrow(comb))
 
+for(i in 1:nrow(comb)){
+  
+  k <- which(unlist(comb[i,])) 
+  
+  if(length(k)==0){
+    H[i] <- 0
+  }else{
+    h <- sapply(k,function(j){
+      (r0[j]^2)/sum(abs(r[j,k]))
+    })
+    H[i] <- sum(h)
+  }
+}
+
+max_H <- max(H)
+best_model <- which.max(H)
+comb[best_model,]
+
+# Najlepszą kombinację uzyskamy biorąc: wynagrodzenie, bezrobocie, ludnosc, podmioty_gosp, studenci_na_1000 i saldo_migracji_na_1000
+
+model_hellwig <- lm(cena_m2 ~ wynagrodzenie + bezrobocie + ludnosc +
+                      saldo_migracji_na_1000 + podmioty_gosp + studenci_na_1000,
+                    data = zbior_train)
 
 # =============================================================================
-# 10. DIAGNOSTYKA MODELU
+# 10. DIAGNOSTYKA I PORÓWNANIE MODELI
 # =============================================================================
 
 cat("\n══ DIAGNOSTYKA ══\n")
 
-# 10a. Czynnik inflacji wariancji (VIF) – wielowspółliniowość
-cat("\n── VIF (>5 = problem, >10 = poważny problem) ──\n")
-print(vif(model_krokowy))
+# 10.1 Testy
 
-# 10b. Test Breuscha-Pagana – heteroskedastyczność
-bp_test <- bptest(model_krokowy)
-cat("\n── Test Breuscha-Pagana (H0: homoskedastyczność) ──\n")
-print(bp_test)
+diagnostyka <- function(model){
+  print(summary(model))
+  print(shapiro.test(model$residuals))
+  print(bptest(model))
+  print(vif(model))
+  print(dwtest(model))
+  print(reset(model))
+  print(runs.test(model$residuals))
+}
 
-# 10c. Test Shapiro-Wilka – normalność reszt
-sw_test <- shapiro.test(residuals(model_krokowy))
-cat("\n── Test Shapiro-Wilka (H0: normalność reszt) ──\n")
-print(sw_test)
+diagnostyka(model_krokowy)
+diagnostyka(model_hellwig)
 
-# 10d. Test Durbina-Watsona – autokorelacja reszt
-dw_test <- dwtest(model_krokowy)
-cat("\n── Test Durbina-Watsona (H0: brak autokorelacji) ──\n")
-print(dw_test)
+#10.2 Testy dla log(cena_m2)
 
-# 10e. Wykresy diagnostyczne
-par(mfrow = c(2, 2))
-plot(model_krokowy, which = 1:4)
-par(mfrow = c(1, 1))
+# Oba modele mają te same problemy. Aby zdecydować, który wybrać zlogarytmujemy zmienną objasnianą aby spróbować
+# pozbyć się heteroskedastyczności i przeprowadzimy diagnostykę raz jeszcze.
 
-# 10f. Identyfikacja obserwacji wpływowych
-influencePlot(model_krokowy, main = "Obserwacje wpływowe")
+model_krokowy_log <- update(model_krokowy, log(cena_m2) ~ .)
+model_hellwig_log <- update(model_hellwig, log(cena_m2) ~ .)
 
-# Dźwignia i reszty Studenta
-leverage   <- hatvalues(model_krokowy)
-reszty_std <- rstandard(model_krokowy)
-cook_d     <- cooks.distance(model_krokowy)
+diagnostyka(model_krokowy_log)
+diagnostyka(model_hellwig_log)
 
-wpływowe <- which(cook_d > 4 / nrow(zbior_train))
-cat("\n── Obserwacje o dużym wpływie (Cook D > 4/n) ──\n")
-if (length(wpływowe) > 0) {
-  print(zbior_train[wpływowe, c("nazwa", "cena_m2")])
-} else cat("Brak obserwacji wpływowych.\n")
+# Po przejściu na logarytm oba modele nie mają już problemu z heteroskedastycznością, dodatkowo model Hellwiga
+# przeszedł pozytywnie test losowości błędów (test serii), co sugeruje, że jest lepszym kandydatem niż model krokowy.
 
 
 # =============================================================================
