@@ -292,7 +292,15 @@ summary(model_pelny)
 
 ## 4b. Selekcja zmiennych metodą krokową (AIC)
 
-Celem AIC jest znalezienie modelu wyjaśniającego największe zróżnicowanie danych, przy jednoczesnym karaniu modeli wykorzystujących nadmierną liczbę parametrów.
+Celem metody AIC (Akaike Information Criterion) jest znalezienie modelu wyjaśniającego największe zróżnicowanie danych, przy jednoczesnym karaniu modeli wykorzystujących nadmierną liczbę parametrów. Startując od pełnego modelu, algorytm stara się zminimalizować wartość AIC dodając lub usuwając kolejne zmienne objaśniające.
+$$
+AIC = -2 \sum_{j} \ln(\hat{\pi}_j) + 2q,
+$$
+gdzie:
+
+$\hat{\pi}_j$ - estymowane prawdopodobieństwo, przy założeniach danego modelu, uzyskania takiej właśnie wartości obserwacji <b>j</b> jaka była naprawdę uzyskana,
+
+q - liczba parametrów modelu.
 
 ```{r}
 model_krokowy <- stepAIC(model_pelny,
@@ -302,14 +310,40 @@ model_krokowy <- stepAIC(model_pelny,
 
 ## 4c. Metoda Hellwiga
 
-Podobnie jak AIC, metoda Hellwiga jest to metoda doboru zmiennych objaśniających do modelu ekonometrycznego. Metoda Hellwiga skupia się na znalezieniu silnej korelacji zmiennych objaśnianych ze zmienną objaśnianą oraz słabej korelacji pomiędzy zmiennymi objaśniającymi. Dodatkowo kieruje się integralnymi wskaźnikami pojemności informacyjnej <b>[`H`]</b> czyli sumą pojedyńczych pojemności <b>[`h`]</b> w każdej kombinacji.
+Podobnie jak AIC, metoda Hellwiga jest to metoda doboru zmiennych objaśniających do modelu ekonometrycznego. Metoda ta skupia się na znalezieniu silnej korelacji zmiennych objaśnianych ze zmienną objaśnianą oraz słabej korelacji pomiędzy zmiennymi objaśniającymi. Dodatkowo kieruje się integralnymi wskaźnikami pojemności informacyjnej <b>[`H`]</b> czyli sumą pojedyńczych pojemności <b>[`h`]</b> w każdej kombinacji, w tym wypadku jednak szukamy największej wartości.
+
+$$
+h_{kj} = \frac{r_j^2}{1 + \sum_{l=1,l\neq j}^{m_k} |r_{lj}|}
+$$
+gdzie:
+
+k - numer kombinacji (k = 1, 2, ..., $2^m$-1),
+
+$m_k$ - liczba zmiennych w <b>k</b>-tej kombinacji,
+
+j - numer zmiennej w rozpatrywanej kombinacji,
+
+$r_j$ - współczynnik korelacji potencjalnej zmiennej objaśniającej o numerze j ze zmienną objaśnianą,
+
+$r_{lj}$ - współczynnik korelacji między <b>l</b>-tą i <b>j</b>-tą potencjalną zmienną objaśniającą.
+
+$$
+H_k = \sum_{j=1}^{m_k} h_{kj}
+$$
+gdzie:
+
+k - numer kombinacji,
+
+$m_k$ - liczba zmiennych w <b>k</b>-tej kombinacji,
+
+j - numer zmiennej w rozpatrywanej kombinacji.
 
 ```{r}
 dane_Hellwig <- zbior_train[-c(1:2)]
 cor_mat <- cor(dane_Hellwig)
 r0 <-  cor_mat[1,-1]
 r <- cor_mat[-1,-1]
-comb <- expand.grid(rep(list(c(T,F)),9))
+comb <- expand.grid(rep(list(c(T,F)),ncol(r)))
 H <- numeric(nrow(comb))
 
 for(i in 1:nrow(comb)){
@@ -328,11 +362,14 @@ for(i in 1:nrow(comb)){
 
 max_H <- max(H)
 best_model <- which.max(H)
-comb[best_model,]
 
-model_hellwig <- lm(cena_m2 ~ wynagrodzenie + bezrobocie + ludnosc +
-                      saldo_migracji_na_1000 + podmioty_gosp + studenci_na_1000,
-                    data = zbior_train)
+best_vars <- names(r0)[which(unlist(comb[best_model,]))]
+
+formula <- as.formula(
+  paste("cena_m2 ~", paste(best_vars, collapse = " + "))
+)
+
+model_hellwig <- lm(formula, data = zbior_train)
 ```
 
 # 5. DIAGNOSTYKA I PORÓWNANIE MODELI
