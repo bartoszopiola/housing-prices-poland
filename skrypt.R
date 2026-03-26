@@ -16,7 +16,9 @@ required_packages <- c(
   "ggcorrplot",  # ggplot2-owa macierz korelacji
   "gridExtra",   # łączenie wykresów
   "moments",      # skewness, kurtosis
-  "randtests"
+  "randtests",
+  "sandwich",
+  "tidytext"
 )
 
 # Instalacja brakujących pakietów
@@ -29,16 +31,16 @@ invisible(lapply(required_packages, library, character.only = TRUE))
 # 1. WCZYTANIE DANYCH
 # =============================================================================
 
-dane_ceny_1m2_mieszkan <- read.csv2("RYNE_3787_CTAB_20260321171501.csv")
-dane_wynagrodzenia      <- read.csv2("WYNA_2497_CTAB_20260321172330.csv")
-dane_bezrobocie         <- read.csv2("RYNE_2392_CTAB_20260321172526.csv")
-dane_ludnosc            <- read.csv2("LUDN_2425_CTAB_20260321173151.csv")
-dane_ludn_na_1km        <- read.csv2("LUDN_2425_CTAB_20260321173131.csv")
-dane_wsk_urb            <- read.csv2("LUDN_2425_CTAB_20260321173206.csv")
-dane_liczba_pozwolen    <- read.csv2("PRZE_4431_CTAB_20260321173635.csv")
-dane_migracje           <- read.csv2("LUDN_1350_CTAB_20260321174505.csv")
-dane_podm_gosp          <- read.csv2("PODM_3802_CTAB_20260321174825.csv")
-dane_liczba_studentow   <- read.csv2("SZKO_3226_CTAB_20260321175636.csv")
+dane_ceny_1m2_mieszkan <- read.csv2("data/RYNE_3787_CTAB_20260321171501.csv")
+dane_wynagrodzenia      <- read.csv2("data/WYNA_2497_CTAB_20260321172330.csv")
+dane_bezrobocie         <- read.csv2("data/RYNE_2392_CTAB_20260321172526.csv")
+dane_ludnosc            <- read.csv2("data/LUDN_2425_CTAB_20260321173151.csv")
+dane_ludn_na_1km        <- read.csv2("data/LUDN_2425_CTAB_20260321173131.csv")
+dane_wsk_urb            <- read.csv2("data/LUDN_2425_CTAB_20260321173206.csv")
+dane_liczba_pozwolen    <- read.csv2("data/PRZE_4431_CTAB_20260321173635.csv")
+dane_migracje           <- read.csv2("data/LUDN_1350_CTAB_20260321174505.csv")
+dane_podm_gosp          <- read.csv2("data/PODM_3802_CTAB_20260321174825.csv")
+dane_liczba_studentow   <- read.csv2("data/SZKO_3226_CTAB_20260321175636.csv")
 
 # =============================================================================
 # 2. FUNKCJA POMOCNICZA – CZYSZCZENIE FORMATU GUS BDL
@@ -307,8 +309,6 @@ model_hellwig <- lm(cena_m2 ~ wynagrodzenie + bezrobocie + ludnosc +
 
 cat("\n══ DIAGNOSTYKA ══\n")
 
-# 10.1 Testy
-
 diagnostyka <- function(model){
   print(summary(model))
   print(shapiro.test(model$residuals))
@@ -322,211 +322,126 @@ diagnostyka <- function(model){
 diagnostyka(model_krokowy)
 diagnostyka(model_hellwig)
 
-#10.2 Testy dla log(cena_m2)
-
-# Oba modele mają te same problemy. Aby zdecydować, który wybrać zlogarytmujemy zmienną objasnianą aby spróbować
-# pozbyć się heteroskedastyczności i przeprowadzimy diagnostykę raz jeszcze.
+# 10b. Modele logarytminczne
 
 model_krokowy_log <- update(model_krokowy, log(cena_m2) ~ .)
 model_hellwig_log <- update(model_hellwig, log(cena_m2) ~ .)
 
+cat("\n══ DIAGNOSTYKA MODELI LOGARYTMICZNYCH ══\n")
+
 diagnostyka(model_krokowy_log)
 diagnostyka(model_hellwig_log)
 
-# Po przejściu na logarytm oba modele nie mają już problemu z heteroskedastycznością, dodatkowo model Hellwiga
-# przeszedł pozytywnie test losowości błędów (test serii), co sugeruje, że jest lepszym kandydatem niż model krokowy.
-
-
 # =============================================================================
-# 11. POPRAWA MODELU
+# 11. PREDYKCJA NA ZBIORZE TESTOWYM ORAZ PORÓWNANIE MODELI (POPRAWIONE)
 # =============================================================================
 
-# 11a. Transformacja logarytmiczna zmiennej objaśnianej (jeśli skośna)
-skewness_y <- moments::skewness(zbior_train$cena_m2)
-cat(sprintf("\nSkośność cena_m2: %.3f %s\n", skewness_y,
-            ifelse(abs(skewness_y) > 1, "– rozważyć log-transformację", "")))
+p1_log <- predict(model_krokowy_log, newdata = zbior_test)
+pred1  <- exp(p1_log)
 
-# Model z log(cena_m2)
-model_log <- update(model_krokowy, log(cena_m2) ~ .)
-cat("\n── Model z log(cena_m2) ──\n")
-summary(model_log)
+p2_log <- predict(model_hellwig_log, newdata = zbior_test)
+pred2  <- exp(p2_log)
 
-# Porównanie R² i AIC
-cat(sprintf("R² krokowy: %.4f | R² log: %.4f\n",
-            summary(model_krokowy)$r.squared,
-            summary(model_log)$r.squared))
-cat(sprintf("AIC krokowy: %.2f | AIC log: %.2f\n",
-            AIC(model_krokowy), AIC(model_log)))
+e1 <- zbior_test$cena_m2 - pred1
+e2 <- zbior_test$cena_m2 - pred2
 
-# 11b. Usunięcie obserwacji wpływowych (opcjonalne)
-if (length(wpływowe) > 0) {
-  zbior_train_clean <- zbior_train[-wpływowe, ]
-  model_bez_outlierow <- update(model_krokowy, data = zbior_train_clean)
-  cat("\n── Model bez obserwacji wpływowych ──\n")
-  summary(model_bez_outlierow)
-  cat(sprintf("R²: %.4f | AIC: %.2f\n",
-              summary(model_bez_outlierow)$r.squared,
-              AIC(model_bez_outlierow)))
-}
+MAE1 <- mean(abs(e1))
+MAE2 <- mean(abs(e2))
 
-# 11c. Wybór najlepszego modelu (zmień jeśli log daje lepsze wyniki)
-# Domyślnie wybieramy model krokowy; zmień na model_log lub model_bez_outlierow
-model_final <- model_log
-# model_final <- model_log  # <- odkomentuj, jeśli log-model lepszy
+RMSE1 <- sqrt(mean(e1^2))
+RMSE2 <- sqrt(mean(e2^2))
 
-cat("\n★ Wybrany model finalny:\n")
-print(formula(model_final))
+MAPE1 <- mean(abs(e1 / zbior_test$cena_m2)) * 100
+MAPE2 <- mean(abs(e2 / zbior_test$cena_m2)) * 100
 
-# Diagnostyka modelu finalnego
-par(mfrow = c(2, 2))
-plot(model_final, which = 1:4, main = "Diagnostyka – model finalny")
-par(mfrow = c(1, 1))
-
-cat("\n── VIF modelu finalnego ──\n")
-print(vif(model_final))
-cat("\n── Test BP modelu finalnego ──\n")
-print(bptest(model_final))
-
-
-# =============================================================================
-# 12. PREDYKCJA NA ZBIORZE TESTOWYM I ANALIZA BŁĘDÓW EX POST
-# =============================================================================
-
-# Predykcja
-# Jeśli model_final to model_log, pamiętaj o exp() przy odwracaniu transformacji:
-if (deparse(formula(model_final)[[2]]) == "log(cena_m2)") {
-  pred_test <- exp(predict(model_final, newdata = zbior_test))
-  # Korekta Duana (bias correction dla log-transformacji)
-  sigma2 <- summary(model_final)$sigma^2
-  pred_test <- pred_test * exp(sigma2 / 2)
-} else {
-  pred_test <- predict(model_final, newdata = zbior_test)
-}
-
-rzeczywiste <- zbior_test$cena_m2
-
-# Miary błędów
-mae_val  <- Metrics::mae(rzeczywiste, pred_test)
-mse_val  <- Metrics::mse(rzeczywiste, pred_test)
-rmse_val <- Metrics::rmse(rzeczywiste, pred_test)
-mape_val <- mean(abs((rzeczywiste - pred_test) / rzeczywiste)) * 100
-r2_test  <- 1 - sum((rzeczywiste - pred_test)^2) /
-  sum((rzeczywiste - mean(rzeczywiste))^2)
-
-cat("\n══ ANALIZA BŁĘDÓW EX POST (zbiór testowy) ══\n")
-cat(sprintf("MAE:  %.2f PLN\n", mae_val))
-cat(sprintf("MSE:  %.2f\n",      mse_val))
-cat(sprintf("RMSE: %.2f PLN\n", rmse_val))
-cat(sprintf("MAPE: %.2f %%\n",  mape_val))
-cat(sprintf("R²:   %.4f\n",      r2_test))
-
-# Porównanie R² train vs test (overfitting?)
-cat(sprintf("\nR² train: %.4f | R² test: %.4f | różnica: %.4f\n",
-            summary(model_final)$r.squared, r2_test,
-            summary(model_final)$r.squared - r2_test))
-
-# Wykres: wartości rzeczywiste vs. przewidywane
-wyniki_test <- data.frame(
-  nazwa        = zbior_test$nazwa,
-  rzeczywista  = rzeczywiste,
-  prognoza     = pred_test,
-  blad_abs     = abs(rzeczywiste - pred_test),
-  blad_wzgl    = abs(rzeczywiste - pred_test) / rzeczywiste * 100
+wyniki_porownanie <- data.frame(
+  Model = c("AIC (log)", "Hellwig (log)"),
+  MAE   = round(c(MAE1, MAE2), 2),
+  RMSE  = round(c(RMSE1, RMSE2), 2),
+  MAPE  = round(c(MAPE1, MAPE2), 2)
 )
 
-ggplot(wyniki_test, aes(x = rzeczywista, y = prognoza)) +
-  geom_point(aes(color = blad_abs), size = 3, alpha = 0.8) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed",
-              color = "firebrick", linewidth = 1) +
-  scale_color_gradient(low = "steelblue", high = "red",
-                       name = "|błąd| [PLN]") +
-  labs(title = "Wartości rzeczywiste vs. prognozowane (zbiór testowy)",
-       x = "Cena rzeczywista [PLN/m²]",
-       y = "Cena prognozowana [PLN/m²]") +
-  theme_minimal(base_size = 12)
+# 12a. Analiza wyników i wizualizacja
 
-# Wykres reszt predykcji
-ggplot(wyniki_test, aes(x = rzeczywista, y = rzeczywista - prognoza)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "firebrick") +
-  geom_point(color = "steelblue", alpha = 0.7, size = 3) +
-  geom_smooth(se = FALSE, color = "darkgreen", linewidth = 0.8) +
-  labs(title = "Reszty predykcji (rzeczywista – prognoza)",
-       x = "Cena rzeczywista [PLN/m²]",
-       y = "Reszta predykcji [PLN]") +
-  theme_minimal(base_size = 12)
+# Zbieramy wyniki dla najlepszego modelu (przyjmujemy AIC wg Sekcji 11)
+wyniki <- data.frame(
+  nazwa     = zbior_test$nazwa,
+  rzecz     = zbior_test$cena_m2,
+  pred      = pred1,
+  blad_proc = abs(e1 / zbior_test$cena_m2) * 100,
+  blad_pln  = abs(e1)
+)
 
-# Top 5 największych błędów
-cat("\n── Top 5 największych błędów predykcji ──\n")
-print(wyniki_test %>%
-        arrange(desc(blad_abs)) %>%
-        dplyr::select(nazwa, rzeczywista, prognoza, blad_abs, blad_wzgl) %>%
-        head(5) %>%
-        mutate(across(where(is.numeric), ~round(., 2))),
-      row.names = FALSE)
+# Wykres 1
+ggplot(wyniki, aes(x = rzecz, y = pred)) +
+  geom_point(color = "steelblue", alpha = 0.7, size = 2) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", linewidth = 1) +
+  labs(
+    x = "Cena rzeczywista [PLN/m²]",
+    y = "Cena przewidywana [PLN/m²]") +
+  theme_minimal(base_size = 14)
 
+# Wykres 2
+dane_skrajne <- bind_rows(
+  wyniki %>% 
+    arrange(desc(blad_proc)) %>% 
+    head(10) %>% 
+    mutate(typ = "Największe błędy"),
+  
+  wyniki %>% 
+    arrange(blad_proc) %>% 
+    head(10) %>% 
+    mutate(typ = "Najmniejsze błędy")
+) %>%
+  mutate(typ = factor(typ, levels = c("Największe błędy", "Najmniejsze błędy")))
 
-# =============================================================================
-# 13. PODSUMOWANIE I INTERPRETACJA PARAMETRÓW
-# =============================================================================
+ggplot(
+  dane_skrajne %>% 
+    mutate(sort_val = ifelse(typ == "Największe błędy", blad_proc, -blad_proc)),
+  aes(x = reorder_within(nazwa, sort_val, typ), y = blad_proc, fill = typ)
+) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = sprintf("%.1f%%", blad_proc)), 
+            hjust = -0.1, size = 3.5, color = "black") +
+  coord_flip() +
+  facet_wrap(~ typ, scales = "free") +
+  scale_x_reordered(labels = function(x) gsub("___.*", "", x)) +
+  scale_fill_manual(values = c("Największe błędy" = "tomato", 
+                               "Najmniejsze błędy" = "mediumseagreen")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) +
+  labs(x = NULL, y = "Błąd procentowy") +
+  theme_minimal(base_size = 14)
 
-cat("\n")
-cat("╔══════════════════════════════════════════════════════════════╗\n")
-cat("║           PODSUMOWANIE PROJEKTU                             ║\n")
-cat("╚══════════════════════════════════════════════════════════════╝\n\n")
+# Wykres 3
+dane_skrajne_pln <- bind_rows(
+  wyniki %>% 
+    arrange(desc(blad_pln)) %>% 
+    head(10) %>% 
+    mutate(typ = "Największe błędy (PLN)"),
+  
+  wyniki %>% 
+    arrange(blad_pln) %>% 
+    head(10) %>% 
+    mutate(typ = "Najmniejsze błędy (PLN)")
+) %>%
+  mutate(typ = factor(typ, levels = c("Największe błędy (PLN)", "Najmniejsze błędy (PLN)")))
 
-cat("CEL: Wyjaśnienie i prognoza ceny transakcyjnej 1m² mieszkania\n")
-cat("DANE: GUS Bank Danych Lokalnych 2022r poziom województw/powiatów\n\n")
+ggplot(
+  dane_skrajne_pln %>% 
+    mutate(sort_val = ifelse(typ == "Największe błędy (PLN)", blad_pln, -blad_pln)),
+  aes(x = reorder_within(nazwa, sort_val, typ), y = blad_pln, fill = typ)
+) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(blad_pln), " PLN")), 
+            hjust = -0.1, size = 3.5, color = "black") +
+  coord_flip() +
+  facet_wrap(~ typ, scales = "free") +
+  scale_x_reordered(labels = function(x) gsub("___.*", "", x)) +
+  scale_fill_manual(values = c("Największe błędy (PLN)" = "tomato", 
+                               "Najmniejsze błędy (PLN)" = "mediumseagreen")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.3))) +
+  labs(x = NULL, y = "Błąd [PLN/m²]") +
+  theme_minimal(base_size = 14)
 
-cat("── Wybrany model ──\n")
-print(summary(model_final)$call)
-cat("\n")
-
-# Tabela współczynników z interpretacją
-coef_df <- as.data.frame(summary(model_final)$coefficients)
-coef_df$istotnosc <- ifelse(coef_df[,4] < 0.001, "***",
-                            ifelse(coef_df[,4] < 0.01,  "**",
-                                   ifelse(coef_df[,4] < 0.05,  "*",
-                                          ifelse(coef_df[,4] < 0.1,   ".",  ""))))
-names(coef_df) <- c("Estymata", "Błąd std.", "t-stat", "p-wartość", "Istotność")
-cat("── Współczynniki ──\n")
-print(cbind(round(coef_df[, 1:4], 4), Istotnosc = coef_df[, 5]))
-
-cat("\n── Interpretacja (model liniowy bez log) ──\n")
-cat("Wzrost zmiennej o 1 jednostkę → zmiana ceny 1m² o wartość współczynnika [PLN]\n")
-cat("Przykład: wzrost wynagrodzenia o 1 PLN → cena_m2 zmienia się o",
-    round(coef(model_final)["wynagrodzenie"], 4), "PLN\n")
-cat("(Dla modelu log: wzrost zm. o 1 → zmiana ceny o (exp(β)-1)×100 %)\n\n")
-
-cat("── Miary dopasowania (trening) ──\n")
-cat(sprintf("R²:          %.4f\n", summary(model_final)$r.squared))
-cat(sprintf("R² adj.:     %.4f\n", summary(model_final)$adj.r.squared))
-cat(sprintf("AIC:         %.2f\n",  AIC(model_final)))
-cat(sprintf("BIC:         %.2f\n",  BIC(model_final)))
-
-cat("\n── Miary błędu predykcji (test) ──\n")
-cat(sprintf("RMSE: %.2f PLN | MAE: %.2f PLN | MAPE: %.2f %%\n",
-            rmse_val, mae_val, mape_val))
-cat(sprintf("R² test: %.4f\n", r2_test))
-
-cat("\n── Wnioski ──\n")
-cat("1. Model wyjaśnia", round(summary(model_final)$r.squared * 100, 1),
-    "% zmienności cen mieszkań za m² w zbiorze treningowym.\n")
-cat("2. Błąd predykcji MAPE =", round(mape_val, 2),
-    "% świadczy o", ifelse(mape_val < 10, "bardzo dobrej",
-                           ifelse(mape_val < 20, "dobrej", "umiarkowanej")),
-    "trafności modelu.\n")
-cat("3. Zmienne istotnie wpływające na cenę m²:\n")
-istotne <- rownames(coef_df)[coef_df$`p-wartość` < 0.05 &
-                               rownames(coef_df) != "(Intercept)"]
-for (zm in istotne) {
-  kierunek <- ifelse(coef_df[zm, "Estymata"] > 0, "dodatni ↑", "ujemny ↓")
-  cat(sprintf("   • %s: wpływ %s\n", zm, kierunek))
-}
-
-cat("\n── Ograniczenia modelu ──\n")
-cat("• Analiza przekrojowa (1 rok) – brak efektów dynamicznych\n")
-cat("• Możliwa endogeniczność (np. migracje ↔ ceny mieszkań)\n")
-cat("• Dane agregowane na poziomie regionalnym – błąd ekologiczny\n")
-cat("• Model liniowy nie uchwytuje nieliniowych zależności\n")
-
-cat("\n══ KONIEC SKRYPTU ══\n")
+# Brak normalności reszt nie wpływa istotnie na estymatory MNK
+# przy dużej liczbie obserwacji (twierdzenie graniczne)
