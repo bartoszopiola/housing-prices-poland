@@ -19,22 +19,17 @@ knitr::opts_chunk$set(
 # ── 0. PAKIETY ────────────────────────────────────────────────────────────────
 required_packages <- c(
   "tidyverse",   # manipulacja danych i wizualizacja
-  "corrplot",    # macierz korelacji
-  "car",         # diagnostyka (vif, ncvTest)
-  "lmtest",      # testy diagnostyczne (bptest, dwtest)
-  "nortest",     # testy normalności (lillie.test)
+  "car",         # diagnostyka (vif)
+  "lmtest",      # testy diagnostyczne (bptest, dwtest, reset)
   "MASS",        # stepAIC
-  "Metrics",     # miary błędu (rmse, mae)
   "ggcorrplot",  # ggplot2-owa macierz korelacji
   "gridExtra",   # łączenie wykresów
-  "moments",      # skewness, kurtosis
-  "randtests",
-  "sandwich",
-  "knitr",
-  "tidytext"
+  "moments",     # skewness, kurtosis
+  "randtests",   # runs.test
+  "knitr",       # kable
+  "tidytext"     # reorder_within, scale_x_reordered
 )
 
-# Instalacja brakujących pakietów
 new_pkgs <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
 if (length(new_pkgs)) install.packages(new_pkgs, dependencies = TRUE)
 invisible(lapply(required_packages, library, character.only = TRUE))
@@ -148,7 +143,7 @@ dane_clean <- dane_clean %>%
   ) %>%
   dplyr::select(-studenci, -saldo_migracji)
 
-# 5d. Sprawdzenie wartości odstających (IQR)
+# 5e. Sprawdzenie wartości odstających (IQR)
 wykryj_outliers <- function(x, nazwa) {
   Q1 <- quantile(x, 0.25)
   Q3 <- quantile(x, 0.75)
@@ -161,7 +156,7 @@ cat("\n── Wartości odstające (3×IQR) ──\n")
 num_cols <- setdiff(names(dane_clean)[sapply(dane_clean, is.numeric)], "kod")
 invisible(lapply(num_cols, function(col) wykryj_outliers(dane_clean[[col]], col)))
 
-zm <- "wynagrodzenie"  # zmień na interesującą zmienną żeby zobaczyć outlierów
+zm <- "wynagrodzenie"
 Q1 <- quantile(dane_clean[[zm]], 0.25)
 Q3 <- quantile(dane_clean[[zm]], 0.75)
 IQR_val <- Q3 - Q1
@@ -180,13 +175,31 @@ dane_clean <- dane_clean[dane_clean$nazwa != "Powiat m. Jastrzębie-Zdrój", ]
 ## 1a. Statystyki opisowe
 
 ```{r echo=FALSE}
-print(summary(dane_clean %>% dplyr::select(where(is.numeric))))
+print(summary(dane_clean %>% dplyr::select(where(is.numeric), -kod)))
 ```
+
 ```{r echo=FALSE}
-print(round(sapply(dane_clean %>% dplyr::select(where(is.numeric)),
+print(round(sapply(dane_clean %>% dplyr::select(where(is.numeric), -kod),
                    function(x) c(skosnosc = moments::skewness(x, na.rm = TRUE),
                                  kurtoza  = moments::kurtosis(x, na.rm = TRUE))), 3))
 ```
+
+**Wnioski ze statystyk opisowych:**
+
+-   **cena_m2**: mediana \~4 800 PLN, średnia \~5 000 PLN – lekka prawostronność (Warszawa, Kraków, Trójmiasto zawyżają średnią); rozstęp 1 541–15 079 PLN pokazuje ogromne zróżnicowanie regionalne.
+-   **wynagrodzenie**: mediana \~5 671 PLN, średnia \~5 820 PLN – umiarkowanie prawostronna; po usunięciu Jastrzębia-Zdroju ogon jest już znacznie mniejszy.
+-   **bezrobocie**: mediana \~6,5%, max \~24,6% – silna prawostronność; większość powiatów skupia się poniżej 10%, ale istnieje długi ogon powiatów strukturalnie bezrobotnych.
+-   **ludnosc**: mediana \~74 tys., max \~1 862 tys. (Warszawa) – klasyczny rozkład Pareto charakterystyczny dla systemów miejskich; ogromna asymetria.
+-   **gestosc**: mediana \~90 os/km², max \~3 600 os/km² – rozkład ekstremalnie prawostrony; centrum wielkich miast winduje maksimum.
+-   **urbanizacja**: zakres 1,1–100% przy medianie \~45% – stosunkowo symetryczny; wartości skrajne to powiaty czysto rolnicze vs. miasta na prawach powiatu.
+-   **pozwolenia_na_1000**: mediana \~2,6 – dane skupione blisko zera z długim ogonem; wyższe wartości odzwierciedlają aktywność budowlaną (więcej podaży).
+-   **podmioty_gosp**: mediana \~5,6 – zróżnicowanie umiarkowane; silniejsze prawostronne ogony w miastach z rozwiniętym sektorem usług.
+-   **studenci_na_1000**: mediana = 0 – ponad połowa powiatów nie posiada uczelni wyższej; rozkład silnie bimodalny: zero vs. wartości wysokie w powiatach akademickich.
+-   **saldo_migracji_na_1000**: mediana \~-1,8 – większość powiatów traci mieszkańców na rzecz miast; wartości dodatnie jedynie w strefach podmiejskich dużych aglomeracji (suburbanizacja).
+
+**Wnioski ze skośności i kurtozy:**
+
+Zdecydowana większość zmiennych wykazuje **prawostronną skośność** (skośność \> 0), co jest typowe dla danych ekonomicznych i demograficznych na poziomie przestrzennym. Kurtoza \> 3 (leptokurtyczność) dla `gestosc`, `ludnosc` i `studenci_na_1000` sugeruje ciężkie ogony – klasyczne rozkłady Pareto lub log-normalne. Zmienna `cena_m2` ma skośność ok. +1, co **uzasadnia późniejsze logarytmowanie** zmiennej objaśnianej w celu zbliżenia reszt do normalności.
 
 ## 1b. Histogramy zmiennych
 
@@ -197,10 +210,13 @@ for (col in num_cols) {
        border = "white", breaks = 15)
 }
 par(mfrow = c(1, 1))
-
 ```
 
+Histogramy potwierdzają wnioski ze statystyk opisowych: niemal wszystkie zmienne mają prawostronne ogony, a `studenci_na_1000` tworzy charakterystyczny rozkład z masą w zerze (brak uczelni) i oddzielnym skupiskiem dla powiatów akademickich.
+
 ## 1c. Wykresy pudełkowe zmiennych objaśniających (normalizacja Z dla porównywalności)
+
+Standaryzacja (µ = 0, σ = 1) pozwala zestawić rozproszenie i asymetrię wszystkich zmiennych na jednej osi – bez niej różnice w skali (np. wynagrodzenie w PLN vs. bezrobocie w %) uniemożliwiałyby bezpośrednie porównanie.
 
 ```{r include=FALSE}
 dane_scaled <- dane_clean %>%
@@ -219,6 +235,13 @@ ggplot(dane_scaled, aes(x = reorder(zmienna, wartosc, FUN = median),
        x = NULL, y = "Wartość standaryzowana") +
   theme_minimal(base_size = 11)
 ```
+
+**Wnioski z wykresów pudełkowych:**
+
+-   `gestosc` i `ludnosc` mają najdłuższe prawostronne wąsy i liczne obserwacje odstające – potwierdzają skrajną asymetrię wynikającą z koncentracji ludności w aglomeracjach.
+-   `cena_m2` wykazuje kilka wyraźnych outlierów po prawej stronie (Warszawa, Kraków, Sopot) przy zachowaniu stosunkowo zwartego pudełka dla pozostałych powiatów.
+-   `saldo_migracji_na_1000` jako jedyna zmienna ma outliery po lewej stronie – istnieją powiaty o wyjątkowo silnym odpływie ludności.
+-   `studenci_na_1000`: bardzo wąskie pudełko (mediana = 0) z długim prawym wąsem – silna koncentracja w zerze i dyskretny charakter zmiennej (obecność/brak uczelni).
 
 # 2. ANALIZA ZALEŻNOŚCI
 
@@ -240,6 +263,19 @@ ggcorrplot(macierz_cor,
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+**Wnioski z korelacji z `cena_m2`:**
+
+-   **podmioty_gosp** (r = 0,45) i **ludnosc** (r = 0,44) – najsilniejszy związek dodatni; gęstość podmiotów gospodarczych jest proxy dla miejskiego charakteru powiatu i wysokiego popytu na mieszkania.
+-   **studenci_na_1000** (r = 0,43) – powiaty akademickie wykazują wyższą presję popytową i wyższe ceny.
+-   **bezrobocie** (r = -0,39) – istotna korelacja ujemna: wyższe bezrobocie to niższa siła nabywcza i słabszy popyt → niższe ceny.
+-   **wynagrodzenie** (r = 0,36) – umiarkowana korelacja dodatnia; zaskakująco niższa niż `podmioty_gosp`, co może wynikać z mniejszego zróżnicowania wynagrodzeń po usunięciu outliera (Jastrzębie-Zdrój).
+-   **gestosc** (r = 0,39) – gęstość zaludnienia silniej wiąże się z cenami niż sam wskaźnik urbanizacji (r = 0,27), bo lepiej oddaje intensywność zagospodarowania terenu.
+-   **pozwolenia_na_1000** (r = 0,11) – najsłabsza korelacja; pozwolenia budowlane reprezentują podaż, która może działać tłumiąco na ceny lub ujawniać się z opóźnieniem czasowym.
+
+**Ostrzeżenie o multikoliniearności:**
+
+Wśród predyktorów obserwujemy wysokie wzajemne korelacje: `gestosc` ↔ `urbanizacja` (r = 0,76), `urbanizacja` ↔ `podmioty_gosp` (r = 0,73), `pozwolenia_na_1000` ↔ `podmioty_gosp` (r = 0,75). Taka współliniowość utrudnia modelowi rozdzielenie efektów poszczególnych zmiennych i **uzasadnia stosowanie metod selekcji** (AIC krokowy, metoda Hellwiga) zamiast modelu ze wszystkimi zmiennymi jednocześnie.
+
 ## 2b. Wykresy rozrzutu: zmienna objaśniana vs. predyktory
 
 ```{r echo=FALSE}
@@ -255,8 +291,18 @@ p_list <- lapply(zmienne_objasniane, function(var) {
 do.call(grid.arrange, c(p_list, ncol = 3))
 ```
 
+**Wnioski z wykresów rozrzutu:**
+
+-   **wynagrodzenie**: wyraźny trend wzrostowy, umiarkowany rozrzut; zależność w przybliżeniu liniowa.
+-   **bezrobocie**: trend malejący; przy wysokim bezrobociu ceny są jednorodnie niskie – sygnał heteroskedastyczności.
+-   **ludnosc** i **gestosc**: kilka obserwacji skrajnych silnie ciągnie linię regresji; chmura ma kształt wykładniczy, co sugeruje, że logarytmowanie zmiennej objaśnianej poprawi dopasowanie.
+-   **pozwolenia_na_1000**: niemal płaska linia regresji – spójne z niską korelacją (r = 0,11).
+-   **podmioty_gosp**: jedna z „czystszych" zależności liniowych w zbiorze – wyraźny trend, względnie mały rozrzut.
+-   **studenci_na_1000**: większość obserwacji skupiona przy x ≈ 0; powiaty akademickie wyraźnie wyżej, ale jest ich nielicznie.
 
 # 3. PODZIAŁ NA ZBIÓR TRENINGOWY I TESTOWY
+
+Podział losowy **70/30** (set.seed = 123 dla reprodukowalności). Przy \~370 obserwacjach po czyszczeniu zbiór treningowy (\~260 obs.) jest wystarczający do estymacji modeli OLS z \~9 predyktorami (reguła co najmniej 10–20 obserwacji na zmienną), a zbiór testowy (\~110 obs.) pozwala na wiarygodną ocenę zdolności predykcyjnych poza próbą (*out-of-sample validation*).
 
 ```{r}
 set.seed(123)
@@ -278,6 +324,8 @@ cat("Średnia cena_m2 – trening:", mean(zbior_train$cena_m2), "\n")
 cat("Średnia cena_m2 – test:   ", mean(zbior_test$cena_m2), "\n")
 ```
 
+Zbliżone wartości średnich (różnica poniżej kilku procent) świadczą o losowości podziału i reprezentatywności obu podzbiorów – można przystąpić do estymacji modeli na zbiorze treningowym.
+
 # 4. DOBÓR ZMIENNYCH I ESTYMACJA MODELI
 
 ## 4a. Model pełny (wszystkie zmienne)
@@ -292,11 +340,9 @@ summary(model_pelny)
 
 ## 4b. Selekcja zmiennych metodą krokową (AIC)
 
-Celem metody AIC (Akaike Information Criterion) jest znalezienie modelu wyjaśniającego największe zróżnicowanie danych, przy jednoczesnym karaniu modeli wykorzystujących nadmierną liczbę parametrów. Startując od pełnego modelu, algorytm stara się zminimalizować wartość AIC dodając lub usuwając kolejne zmienne objaśniające.
-$$
+Celem metody AIC (Akaike Information Criterion) jest znalezienie modelu wyjaśniającego największe zróżnicowanie danych, przy jednoczesnym karaniu modeli wykorzystujących nadmierną liczbę parametrów. Startując od pełnego modelu, algorytm stara się zminimalizować wartość AIC dodając lub usuwając kolejne zmienne objaśniające. $$
 AIC = -2 \sum_{j} \ln(\hat{\pi}_j) + 2q,
-$$
-gdzie:
+$$ gdzie:
 
 $\hat{\pi}_j$ - estymowane prawdopodobieństwo, przy założeniach danego modelu, uzyskania takiej właśnie wartości obserwacji <b>j</b> jaka była naprawdę uzyskana,
 
@@ -314,8 +360,7 @@ Podobnie jak AIC, metoda Hellwiga jest to metoda doboru zmiennych objaśniający
 
 $$
 h_{kj} = \frac{r_j^2}{1 + \sum_{l=1,l\neq j}^{m_k} |r_{lj}|}
-$$
-gdzie:
+$$ gdzie:
 
 k - numer kombinacji (k = 1, 2, ..., $2^m$-1),
 
@@ -329,8 +374,7 @@ $r_{lj}$ - współczynnik korelacji między <b>l</b>-tą i <b>j</b>-tą potencja
 
 $$
 H_k = \sum_{j=1}^{m_k} h_{kj}
-$$
-gdzie:
+$$ gdzie:
 
 k - numer kombinacji,
 
@@ -398,28 +442,29 @@ diagnostyka(model_krokowy)
 
 Zmienne wybrane przez algorytm: wynagrodzenie, ludność, gęstość, pozwolenia na 1000 osób, podmoty gospodarcze oraz studenci na 1000 osób. <b>$R^2$</b> na poziome 0.424 oznacza, że nasz model wyjaśnia 42,4% zmienności cen mieszkań za metr kwadratowy
 
-Wykryte problemy: 
+Wykryte problemy:
 
-- brak normalności reszt
+-   brak normalności reszt
 
-- heteroskedastyczność
+-   heteroskedastyczność
 
-- brak losowości reszt
+-   brak losowości reszt
 
 ## 5c. Diagnostyka modelu Hellwiga
 
 ```{r}
 diagnostyka(model_hellwig)
 ```
+
 Zmienne wybrane przez algorytm: wynagrodzenie, bezrobocie, ludność, saldo migracji na 1000 osób, podmioty gospodarcze oraz studenci na 1000 osób. <b>$R^2$</b> jest równe 0.3946 co oznacza, że model wyjaśnia 39,46% zmienności cen mieszkań za metr kwadratowy. Jest to nieco mniej niż w przypadku modelu krokowego.
 
 Wykryte problemy:
 
-- brak normalności reszt
+-   brak normalności reszt
 
-- heteroskedastyczność
+-   heteroskedastyczność
 
-- brak losowości reszt
+-   brak losowości reszt
 
 ## 5c. Diagnostyka modelu krokowego (AIC) ze zlogarytmizowaną zmienną objaśnianą
 
@@ -427,6 +472,7 @@ Wykryte problemy:
 model_krokowy_log <- update(model_krokowy, log(cena_m2) ~ .)
 diagnostyka(model_krokowy_log)
 ```
+
 Tym sposobem pozbyliśmy się heteroskedastyczności, jednakże reszta problemów pozostaje nierozwiązana. <b>$R^2$</b> spadło z 42,4% do 40,84%.
 
 ## 5d. Diagnostyka modelu Hellwiga ze zlogarytmizowaną zmienną objaśnianą
@@ -437,7 +483,6 @@ diagnostyka(model_hellwig_log)
 ```
 
 Zlogarytmizowany model Hellwiga pozbył się heteroskedastyczności oraz przeszedł pozytywnie test serii (test losowości reszt). <b>$R^2$</b> z wyniku 39,46% spadło do 37,8%.
-
 
 # 6. PREDYKCJA NA ZBIORZE TESTOWYM ORAZ PORÓWNANIE MODELI
 
@@ -509,7 +554,7 @@ Wykres przedstawia relację między rzeczywistymi cenami transakcyjnymi na metrz
 
 Dla większości powiatów, gdzie ceny rzeczywiste mieszczą się w przedziale 4000 – 7000 PLN/$m^2$, punkty rozmieszczone są blisko prostej $y=x$, co oznacza, że model radzi sobie dobrze jeśli chodzi o typowe nieruchomości.
 
-Widoczny jest również istotny problem z niedoszacowaniem cen w najdroższych powiatach (ceny rzeczywiste > 8000 PLN/$m^2$). Punkty te znajdują się wyraźnie poniżej czerwonej linii. Największy błąd predykcji występuje dla powiatu o cenie rzeczywistej blisko 15 000 PLN/$m^2$, który model wycenił na jedynie ok. 5200 PLN/$m^2$.
+Widoczny jest również istotny problem z niedoszacowaniem cen w najdroższych powiatach (ceny rzeczywiste \> 8000 PLN/$m^2$). Punkty te znajdują się wyraźnie poniżej czerwonej linii. Największy błąd predykcji występuje dla powiatu o cenie rzeczywistej blisko 15 000 PLN/$m^2$, który model wycenił na jedynie ok. 5200 PLN/$m^2$.
 
 ## Top i Bottom 10 powiatów pod względem procentowego błędu predykcji
 
@@ -545,8 +590,7 @@ ggplot(
   theme_minimal(base_size = 14)
 ```
 
-Największy błąd procentowy miał miejsce dla powiatu iwóweckiego (woj. dolnośląskie) i wynosi 93,3%, natomiast model najlepiej poradził sobię z powiatem świdnickim (woj. dolnośląskie) oraz z powiatem lublinieckim (woj. śląskie)
-gdzie procentowy błąd wyniósł kolejno 0,2% oraz 0,4%
+Największy błąd procentowy miał miejsce dla powiatu iwóweckiego (woj. dolnośląskie) i wynosi 93,3%, natomiast model najlepiej poradził sobię z powiatem świdnickim (woj. dolnośląskie) oraz z powiatem lublinieckim (woj. śląskie) gdzie procentowy błąd wyniósł kolejno 0,2% oraz 0,4%
 
 ## Top i Bottom 10 powiatów pod względem błędu predykcji w PLN
 
