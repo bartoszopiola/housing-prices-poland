@@ -466,23 +466,27 @@ Wykryte problemy:
 
 -   brak losowości reszt
 
-## 5c. Diagnostyka modelu krokowego (AIC) ze zlogarytmizowaną zmienną objaśnianą
+## 5d. Diagnostyka modelu krokowego (AIC) ze zlogarytmizowaną zmienną objaśnianą
 
 ```{r}
 model_krokowy_log <- update(model_krokowy, log(cena_m2) ~ .)
 diagnostyka(model_krokowy_log)
 ```
 
-Tym sposobem pozbyliśmy się heteroskedastyczności, jednakże reszta problemów pozostaje nierozwiązana. <b>$R^2$</b> spadło z 42,4% do 40,84%.
+Tym sposobem pozbyliśmy się heteroskedastyczności, jednakże reszta problemów pozostaje nierozwiązana. <b>$R^2$</b> wynosi 40,84%.
 
-## 5d. Diagnostyka modelu Hellwiga ze zlogarytmizowaną zmienną objaśnianą
+Warto również zauważyć, iż 3 zmienne mają p-value > 0.05. Co ważne, nie zostaną one usunięte ponieważ Metoda krokowa AIC celowo nie kieruje się istotnością statystyczną, tylko kryterium informacyjnym. AIC może zachować zmienną z p-value > 0,05 jeśli jej obecność obniża AIC, bo nawet słaby predyktor może poprawiać globalne dopasowanie modelu.
+
+## 5e. Diagnostyka modelu Hellwiga ze zlogarytmizowaną zmienną objaśnianą
 
 ```{r}
 model_hellwig_log <- update(model_hellwig, log(cena_m2) ~ .)
 diagnostyka(model_hellwig_log)
 ```
 
-Zlogarytmizowany model Hellwiga pozbył się heteroskedastyczności oraz przeszedł pozytywnie test serii (test losowości reszt). <b>$R^2$</b> z wyniku 39,46% spadło do 37,8%.
+Zlogarytmizowany model Hellwiga pozbył się heteroskedastyczności oraz przeszedł pozytywnie test serii (test losowości reszt). <b>$R^2$</b> wynosi 37,8%.
+
+Tutaj sytuacja jest podobna, albowiem znowu widzimy zmienne, które są statystyczne nieistotne i tutaj również nie zostaną one usunięte z modelu, ponieważ dzięki tym zmiennym został zmaksymalizowany wskaźnik H podczas doboru parametrów.
 
 # 6. PREDYKCJA NA ZBIORZE TESTOWYM ORAZ PORÓWNANIE MODELI
 
@@ -523,7 +527,7 @@ kable(wyniki_porownanie)
 
 Na podstawie powyższych wyników możemy stwierdzić, iż model krokowy (AIC) popełnia mniejsze błedy podczas predykcji.
 
-<b>MAE</b> na poziomie 826,26 oznacza, że model myli się średnio o właśnie tyle złotych. Większa wartość RMSE może wskazywać na pojawiające się w zbiorze danych wartości odstające. Dodatkowo, dzięki MAPE wiemy, że nasz model myli się średnio o 16,04%.
+<b>MAE</b> na poziomie 826,26 oznacza, że model myli się średnio o właśnie tyle złotych. Większa wartość RMSE może wskazywać na pojawiające się w zbiorze danych wartości odstające. Dodatkowo, dzięki MAPE wiemy, że nasz model myli się średnio o 15,82%.
 
 ## 6c. Analiza i wizualizacja wyników
 
